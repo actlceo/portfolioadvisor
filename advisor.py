@@ -136,6 +136,61 @@ def evaluate(sym: str, q: dict, rng: dict | None, bands: dict, verdict: str | No
     return alerts
 
 
+STOCK_LIMIT = float(os.getenv("PM_MAX_STOCK_PCT", "10"))
+SECTOR_LIMIT = float(os.getenv("PM_MAX_SECTOR_PCT", "25"))
+SECTORS_PATH = ROOT / "sectors.json"          # symbol -> sector (approximate, committed)
+BASELINE_PATH = DATA / "plan_baseline.json"   # quantities when the plan started
+
+
+def summarize(positions: list[dict], sectors: dict) -> dict:
+    """Totals, concentration and sector exposure against the owner's limits."""
+    total = sum(p["value"] for p in positions) or 1.0
+    ranked = sorted(positions, key=lambda p: -p["value"])
+    by_sector: dict[str, float] = {}
+    for p in positions:
+        s = sectors.get(p["symbol"], "Unclassified")
+        by_sector[s] = by_sector.get(s, 0.0) + p["value"]
+    rows = [{"sector": s, "value": round(v, 2), "pct": round(v / total * 100, 2),
+             "over": v / total * 100 > SECTOR_LIMIT}
+            for s, v in sorted(by_sector.items(), key=lambda kv: -kv[1])]
+    day_pnl = sum(p.get("day_pnl") or 0.0 for p in positions)
+    return {
+        "day_pnl": round(day_pnl, 2),
+        "day_pnl_pct": round(day_pnl / (total - day_pnl) * 100, 2) if total - day_pnl else 0.0,
+        "top5_pct": round(sum(p["value"] for p in ranked[:5]) / total * 100, 1),
+        "top7_pct": round(sum(p["value"] for p in ranked[:7]) / total * 100, 1),
+        "over_stock_limit": [p["symbol"] for p in ranked if p["value"] / total * 100 > STOCK_LIMIT],
+        "sectors": rows,
+        "limits": {"stock": STOCK_LIMIT, "sector": SECTOR_LIMIT},
+    }
+
+
+def plan_progress(positions: list[dict], memory: dict, baseline: dict | None) -> list[dict]:
+    """For every EXIT / CONSOLIDATE / TRIM name: how much of the starting quantity is left."""
+    if not baseline:
+        return []
+    base = baseline.get("qty", {})
+    now = {p["symbol"]: p["qty"] for p in positions}
+    v = memory.get("verdicts") or {}
+    todo: list[tuple[str, str, str]] = []
+    for label in ("EXIT", "CONSOLIDATE"):
+        todo += [(_name(n), label, "") for n in v.get(label, [])]
+    for n, hint in (v.get("TRIM") or {}).items():
+        todo.append((_name(n), "TRIM", hint))
+    rows = []
+    for sym, label, hint in todo:
+        b = base.get(sym)
+        if not b:
+            continue
+        q = now.get(sym, 0.0)
+        left = q / b * 100
+        status = "Done" if q <= 0 else ("Not started" if left > 98 else "In progress")
+        rows.append({"symbol": sym, "plan": label, "hint": hint, "start_qty": b,
+                     "qty": q, "left_pct": round(left, 0), "status": status})
+    order = {"In progress": 0, "Not started": 1, "Done": 2}
+    return sorted(rows, key=lambda r: (order[r["status"]], r["symbol"]))
+
+
 def filter_new(alerts: list[dict], state: dict, today: str) -> tuple[list[dict], dict]:
     """Same symbol+kind is not re-sent the same day unless price moved >= REALERT_PCT."""
     if state.get("date") != today:
@@ -189,7 +244,8 @@ def run_cycle(quote_fn, range_fn, send: bool = True, holdings_path: Path = HOLDI
         rng = rcache["r"][sym]
         alerts += evaluate(sym, q, rng, bands, verdicts.get(sym))
         positions.append({
-            **h, "ltp": q["ltp"],
+            **h, "ltp": q["ltp"], "prev_close": q["prev_close"],
+            "day_pnl": round(h["qty"] * (q["ltp"] - q["prev_close"]), 2) if q["prev_close"] else None,
             "day_pct": round((q["ltp"] / q["prev_close"] - 1) * 100, 2) if q["prev_close"] else None,
             "value": round(h["qty"] * q["ltp"], 2),
             "pnl_pct": round((q["ltp"] / h["cost"] - 1) * 100, 1) if h["cost"] else None,
@@ -202,10 +258,21 @@ def run_cycle(quote_fn, range_fn, send: bool = True, holdings_path: Path = HOLDI
     state = _load_json(STATE_PATH, {})
     fresh, state = filter_new(alerts, state, today)
 
+    DATA.mkdir(exist_ok=True)
+    baseline = _load_json(BASELINE_PATH, None)
+    if baseline is None and send:        # first live cycle: remember the starting quantities
+        baseline = {"date": today, "qty": {p["symbol"]: p["qty"] for p in positions}}
+        BASELINE_PATH.write_text(json.dumps(baseline), encoding="utf-8")
+    sectors = _load_json(SECTORS_PATH, {})
+
     snap = {"as_of": now.isoformat(timespec="seconds"), "total_value": round(total, 2),
             "n_positions": len(positions), "no_quote": missing, "alerts": alerts,
+            "summary": summarize(positions, sectors),
+            "plan": plan_progress(positions, memory, baseline),
+            "baseline_date": baseline.get("date") if baseline else None,
             "positions": sorted(positions, key=lambda p: -p["value"])}
-    DATA.mkdir(exist_ok=True)
+    for p in snap["positions"]:
+        p["sector"] = sectors.get(p["symbol"], "Unclassified")
     SNAPSHOT_PATH.write_text(json.dumps(snap, indent=1), encoding="utf-8")
     RANGE_PATH.write_text(json.dumps(rcache), encoding="utf-8")
 

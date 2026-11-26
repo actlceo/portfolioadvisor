@@ -114,6 +114,61 @@ def test_dashboard_auth_fails_closed(monkeypatch):
     assert c.get("/?token=s3cret", headers={"X-Forwarded-For": "1.2.3.4"}).status_code == 200
 
 
+def _pos(sym, value, qty=10, day_pnl=0.0):
+    return {"symbol": sym, "value": value, "qty": qty, "day_pnl": day_pnl}
+
+
+def test_summarize_flags_sector_and_stock_limits():
+    pos = [_pos("A", 400), _pos("B", 300), _pos("C", 200), _pos("D", 100)]
+    s = A.summarize(pos, {"A": "Fin", "B": "Fin", "C": "Power", "D": "Power"})
+    assert s["top5_pct"] == 100.0 and s["top7_pct"] == 100.0
+    fin = next(r for r in s["sectors"] if r["sector"] == "Fin")
+    assert fin["pct"] == 70.0 and fin["over"] is True               # over the 25% sector limit
+    assert s["over_stock_limit"] == ["A", "B", "C"]                 # D is exactly 10%: at, not over
+    assert A.summarize([_pos("A", 100)], {})["sectors"][0]["sector"] == "Unclassified"
+
+
+def test_summarize_day_pnl_uses_prior_value_as_base():
+    s = A.summarize([_pos("A", 1100, day_pnl=100), _pos("B", 900, day_pnl=-50)], {})
+    assert s["day_pnl"] == 50.0 and abs(s["day_pnl_pct"] - 2.56) < 0.01   # 50 / (2000-50)
+
+
+def test_plan_progress_status_and_missing_baseline():
+    mem = {"verdicts": {"EXIT": ["AAA(tranches)"], "TRIM": {"BBB": "to 5%"}, "CONSOLIDATE": ["CCC"]}}
+    assert A.plan_progress([_pos("AAA", 1)], mem, None) == []        # no baseline yet
+    base = {"date": "2026-11-26", "qty": {"AAA": 100, "BBB": 100, "CCC": 50}}
+    rows = {r["symbol"]: r for r in A.plan_progress(
+        [_pos("AAA", 1, qty=40), _pos("BBB", 1, qty=100)], mem, base)}   # CCC no longer held
+    assert rows["AAA"]["status"] == "In progress" and rows["AAA"]["left_pct"] == 40
+    assert rows["BBB"]["status"] == "Not started" and rows["BBB"]["hint"] == "to 5%"
+    assert rows["CCC"]["status"] == "Done"
+
+
+def test_dashboard_renders_full_snapshot(tmp_path, monkeypatch):
+    import dashboard as D
+    for name in ("SNAPSHOT_PATH", "STATE_PATH", "RANGE_PATH", "BASELINE_PATH"):
+        monkeypatch.setattr(A, name, tmp_path / f"{name}.json")
+    monkeypatch.setattr(A, "DATA", tmp_path)
+    monkeypatch.setattr(A, "SECTORS_PATH", FX.parent.parent / "sectors.json")
+    fx = json.loads((FX / "day.json").read_text())
+    A.run_cycle(lambda s: fx["quotes"].get(s), lambda s: fx["ranges"].get(s), send=False,
+                holdings_path=FX / "holdings.csv", memory_path=FX / "memory.json")
+    monkeypatch.setattr(D, "SNAP", A.SNAPSHOT_PATH)
+    monkeypatch.setattr(D, "TOKEN", "")
+    monkeypatch.setattr(D, "HOST", "127.0.0.1")
+    r = D.app.test_client().get("/")
+    html = r.get_data(as_text=True)
+    assert r.status_code == 200 and "Sector exposure" in html and "Positions" in html
+    assert "NMDC" in html and "buy_below" in html
+    assert "SAURABH" not in html.upper()
+
+
+def test_indian_grouping_and_short_amounts():
+    import dashboard as D
+    assert D._grp(24438491) == "2,44,38,491" and D._grp(-1234567) == "-12,34,567" and D._grp(950) == "950"
+    assert D._inr(24438491) == "₹2.44 cr" and D._inr(1832250) == "₹18.32 L"
+
+
 def test_replay_cycle_end_to_end(tmp_path, monkeypatch):
     for name in ("SNAPSHOT_PATH", "STATE_PATH", "RANGE_PATH"):
         monkeypatch.setattr(A, name, tmp_path / f"{name}.json")
