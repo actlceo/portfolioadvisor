@@ -24,7 +24,31 @@ Upload the two data files (they are not in git):
 scp -i "$KEY" holdings.xlsx ubuntu@$HOST:~/portfolio_advisor/data/holdings.xlsx
 scp -i "$KEY" memory.json   ubuntu@$HOST:~/portfolio_advisor/data/memory.json
 ```
-Open port 5041 in the Lightsail firewall (console) if you want the dashboard from outside.
+### HTTPS front (nginx, same pattern as the v2 dashboard)
+The dashboard binds `127.0.0.1:5041` and is reached only through nginx + certbot, so the token
+never travels over plain HTTP. Port 5041 does NOT need to be open in the Lightsail firewall.
+Create `/etc/nginx/sites-available/portfolio-<domain>` (replace `SUBDOMAIN`; the DNS A record
+must already point at this server):
+```nginx
+server {
+    server_name SUBDOMAIN;
+    location / {
+        proxy_pass http://127.0.0.1:5041;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    listen 80;
+}
+```
+```bash
+sudo ln -s /etc/nginx/sites-available/portfolio-<domain> /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx      # reload only; never restart nginx
+sudo certbot --nginx -d SUBDOMAIN                 # adds the 443 server + redirect
+```
+Other sites share this nginx: add only this one file, run `nginx -t` first, and reload (not restart).
+The dashboard refuses any request without the token, including proxied ones.
 
 Start:
 ```bash

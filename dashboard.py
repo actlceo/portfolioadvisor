@@ -1,8 +1,8 @@
 """Portfolio page. Reads data/snapshot.json written by advisor.py; never calls a broker.
 
-Dev:     python dashboard.py                      -> 127.0.0.1:8082 (no token)
-Server:  PM_DASH_HOST=0.0.0.0 PM_DASH_TOKEN=...   -> :5041, token-gated, fail-closed
-Open https://host:5041/?token=...  (the token is remembered in a cookie).
+Dev:     python dashboard.py                      -> 127.0.0.1:8082 (no token needed, direct local only)
+Server:  PM_DASH_TOKEN=... PM_DASH_PORT=5041      -> token required for every request, behind nginx
+Open https://<subdomain>/?token=...  (the token is remembered in a cookie).
 """
 from __future__ import annotations
 
@@ -23,12 +23,14 @@ app = Flask(__name__)
 
 
 def _authorised() -> bool:
-    if HOST == "127.0.0.1":
-        return True
-    if not TOKEN:                                   # fail-closed on a public bind
-        return False
-    got = request.args.get("token") or request.cookies.get("pm_token") or ""
-    return hmac.compare_digest(got, TOKEN)
+    """Token whenever one is set. With no token, only a direct local request is allowed:
+    a request carrying proxy headers (nginx adds X-Forwarded-For / X-Real-IP) came from
+    outside, so it is refused. Fail-closed: a proxied dashboard can never be tokenless."""
+    if TOKEN:
+        got = request.args.get("token") or request.cookies.get("pm_token") or ""
+        return hmac.compare_digest(got, TOKEN)
+    proxied = bool(request.headers.get("X-Forwarded-For") or request.headers.get("X-Real-IP"))
+    return HOST == "127.0.0.1" and not proxied
 
 
 def _fmt(v, nd=2, suffix=""):

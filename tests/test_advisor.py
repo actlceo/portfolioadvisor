@@ -101,6 +101,19 @@ def test_verdict_map_strips_annotations():
     assert v == {"UCOBANK": "EXIT", "JPL": "CORE_HOLD", "INDHOTEL": "TRIM"}
 
 
+def test_dashboard_auth_fails_closed(monkeypatch):
+    import dashboard as D
+    c = D.app.test_client()
+    monkeypatch.setattr(D, "HOST", "127.0.0.1")
+    monkeypatch.setattr(D, "TOKEN", "")
+    assert c.get("/").status_code == 200                                      # direct local dev
+    assert c.get("/", headers={"X-Forwarded-For": "1.2.3.4"}).status_code == 403   # via proxy, no token set
+    monkeypatch.setattr(D, "TOKEN", "s3cret")
+    assert c.get("/").status_code == 403                                      # token set: always required
+    assert c.get("/?token=wrong").status_code == 403
+    assert c.get("/?token=s3cret", headers={"X-Forwarded-For": "1.2.3.4"}).status_code == 200
+
+
 def test_replay_cycle_end_to_end(tmp_path, monkeypatch):
     for name in ("SNAPSHOT_PATH", "STATE_PATH", "RANGE_PATH"):
         monkeypatch.setattr(A, name, tmp_path / f"{name}.json")
