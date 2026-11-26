@@ -1,0 +1,11 @@
+{
+  "verdicts": {
+    "EXIT": ["MAHSEAMLES"],
+    "CORE_HOLD": ["NMDC", "HAL"],
+    "HOLD_MONITOR": ["BBTC"]
+  },
+  "alert_bands": {
+    "buy_below": {"NMDC": 68, "HAL": 4200},
+    "sell_above": {"MAHSEAMLES": 560}
+  }
+}

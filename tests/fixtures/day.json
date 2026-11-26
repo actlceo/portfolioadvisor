@@ -1,0 +1,14 @@
+{
+  "holdings": "tests/fixtures/holdings.csv",
+  "memory": "tests/fixtures/memory.json",
+  "quotes": {
+    "NMDC":       {"ltp": 67.26,  "prev_close": 66.69,   "volume": 100000},
+    "MAHSEAMLES": {"ltp": 448.50, "prev_close": 460.35,  "volume": 50000},
+    "BBTC":       {"ltp": 1170.00,"prev_close": 1264.10, "volume": 10000},
+    "HAL":        {"ltp": 4936.00,"prev_close": 4930.00, "volume": 20000}
+  },
+  "ranges": {
+    "MAHSEAMLES": {"high52": 900, "low52": 458.15, "avg_vol20": 40000},
+    "NMDC":       {"high52": 97.5, "low52": 65.15, "avg_vol20": 90000}
+  }
+}
