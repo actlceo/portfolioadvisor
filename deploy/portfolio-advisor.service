@@ -1,0 +1,18 @@
+[Unit]
+Description=Portfolio advisor alert loop (advisory only, no orders)
+After=network-online.target openalgo.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/portfolio_advisor
+EnvironmentFile=/home/ubuntu/portfolio_advisor/.env
+ExecStart=/home/ubuntu/portfolio_advisor/venv/bin/python advisor.py --loop
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/ubuntu/portfolio_advisor/advisor.log
+StandardError=append:/home/ubuntu/portfolio_advisor/advisor.err.log
+
+[Install]
+WantedBy=multi-user.target

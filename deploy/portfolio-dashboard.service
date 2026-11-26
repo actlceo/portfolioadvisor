@@ -1,0 +1,19 @@
+[Unit]
+Description=Portfolio advisor dashboard (0.0.0.0:5041, token-gated, read-only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/portfolio_advisor
+EnvironmentFile=/home/ubuntu/portfolio_advisor/.env
+Environment=PM_DASH_HOST=0.0.0.0
+ExecStart=/home/ubuntu/portfolio_advisor/venv/bin/python dashboard.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/ubuntu/portfolio_advisor/dashboard.log
+StandardError=append:/home/ubuntu/portfolio_advisor/dashboard.err.log
+
+[Install]
+WantedBy=multi-user.target
